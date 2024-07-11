@@ -179,7 +179,7 @@ def download_recordings_page(driver:webdriver.Chrome, session:requests.Session,
         # save the recording
         lec_idx = num_lecs - a_elements.index(a)
         print(f'Downloading lec_{lec_idx}.mp4, it may take a while')
-        with open(f'{download_dir}/lec_{lec_idx}.mp4', 'wb') as file:
+        with open(os.path.join(download_dir, f'lec_{lec_idx}.mp4'), 'wb') as file:
             response = session.get(download_url)
             total_size = int(response.headers.get('content-length', 0))
             block_size = 1024  # 1 Kilobyte
@@ -288,7 +288,7 @@ def download_file_from_url(session:requests.Session, url, download_dir):
         print(f"Not downloading {unquote(response.url)}: invalid suffix!")
         return False
     else:
-        with open(f"{download_dir}/{unquote(file_name)}", 'wb') as file:
+        with open(os.path.join(download_dir, unquote(file_name)), 'wb') as file:
             file.write(response.content)
             print(f"{unquote(file_name)} downloaded!")
     return True
@@ -304,17 +304,28 @@ if __name__ == '__main__':
         # download_channel_lst: Chinese name of the channel you want to download, must be a subset of ['课堂实录', '教学内容', '课程作业']
         # download_dir_lst: English name of the channel you want to download, must be a subset of ['recordings', 'materials', 'homework']
     # Note: the length of download_channel_lst and download_dir_lst should be the same
+    # Note: the course name in the *_ignore_list must be identical to the course name in the course_list
     username = 'xxx'
     password = 'xxx'
-    course_lst = ['JS语言Web程序设计(23-24学年第2学期)']
+    course_lst = ['JS语言Web程序设计(23-24学年第2学期)', 'Rust程序设计(23-24学年第2学期)', '人工智能中的编程(23-24学年第1学期)', '图形学物理仿真(23-24学年第2学期)', '几何计算前沿(23-24学年第2学期)', '大规模语言模型与自然语言生成(23-24学年第2学期)', '数据库概论（实验班）(23-24学年第2学期)', '角色动画与运动仿真(23-24学年第2学期)',
+                    '近现代物理导论 II(23-24学年第2学期)', 'AI中的数学(21-22学年第2学期)', '多智能体系统(22-23学年第2学期)', '机器学习(21-22学年第2学期)', '生成模型基础(23-24学年第1学期)', '计算机网络(23-24学年第1学期)']
     download_channel_lst = ['课堂实录', '教学内容', '课程作业'] # Currently only the three channels are supported
     download_dir_lst = ['recordings', 'materials', 'homework']
+    recording_ignore_list = ['JS语言Web程序设计(23-24学年第2学期)', 'Rust程序设计(23-24学年第2学期)', '人工智能中的编程(23-24学年第1学期)', '图形学物理仿真(23-24学年第2学期)', '多智能体系统(22-23学年第2学期)', 'AI中的数学(21-22学年第2学期)',
+                                ]
+    material_ignore_list = []
+    homework_ignore_list = []
     assert len(download_channel_lst) == len(download_dir_lst), 'Length of download_channel and download_dir should be the same'
 
     # login in and enter the main course list page
     login(driver, username, password)
     # set cookies of the session for downloading files as authenticated user
     session = set_cookies(driver)
+
+    # remove the semester suffix of the course name in the ignore list
+    recording_ignore_list = [course_name.split('(')[0] for course_name in recording_ignore_list]
+    material_ignore_list = [course_name.split('(')[0] for course_name in material_ignore_list]
+    homework_ignore_list = [course_name.split('(')[0] for course_name in homework_ignore_list]
 
     # iterate over the course list and download all files in all channels you specify
     for course_name in course_lst:
@@ -325,15 +336,18 @@ if __name__ == '__main__':
         main_page_window = enter_course_page(driver, course_name)
         for download_channel, download_dir in zip(download_channel_lst, download_dir_lst):
             # create the download directory if not exists
-            real_download_dir = f'./{course_name}/{download_dir}'
+            real_download_dir = os.path.join('.', course_name, download_dir)
             os.makedirs(real_download_dir, exist_ok=True)
-            if download_dir == 'materials':
+            if download_dir == 'materials' and not course_name in material_ignore_list:
                 download_materials(driver, session, download_channel, real_download_dir)
-            elif download_dir == 'recordings':
+            elif download_dir == 'recordings' and not course_name in recording_ignore_list:
                 download_recordings(driver, session, download_channel, real_download_dir)
-            elif download_dir == 'homework':
+            elif download_dir == 'homework' and not course_name in homework_ignore_list:
                 download_homework(driver, session, download_channel, real_download_dir)
             else:
                 raise NotImplementedError('Currently only recordings, materials and homework downloading are supported')
         # close the course page and switch back to the main course list page
         switch_back(main_page_window)
+
+# TODO: handle the case where there are directories of files in the materials channel
+# TODO: handle the case where for older classes, there is no recording channel and it is in another place
