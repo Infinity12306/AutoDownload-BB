@@ -294,7 +294,7 @@ def download_file_from_url(session:requests.Session, url, download_dir):
     return True
 
 if __name__ == '__main__':
-    driver = webdriver.Chrome(service=Service('./chromedriver'))
+    driver = webdriver.Chrome(service=Service(os.path.join('.', 'chromedriver.exe')))
     driver.get('https://course.pku.edu.cn/webapps/bb-sso-BBLEARN/login.html')
 
     # Note: all you need to enter or modify include
@@ -351,3 +351,4 @@ if __name__ == '__main__':
 
 # TODO: handle the case where there are directories of files in the materials channel
 # TODO: handle the case where for older classes, there is no recording channel and it is in another place
+# TODO: login button can be both English or Chinese
