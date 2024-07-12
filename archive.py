@@ -10,7 +10,7 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.remote.webelement import WebElement
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, urlparse, parse_qs
 from typing import List
 from tqdm import tqdm
 
@@ -30,7 +30,7 @@ def login(driver, username, password):
 
     # click the login button
     login_button = WebDriverWait(driver, 10).until(
-        EC.element_to_be_clickable((By.XPATH, '//input[@value="Login"]'))
+        EC.element_to_be_clickable((By.XPATH, '//input[@id="logon_button"]'))
     )
     login_button.click()
 
@@ -67,33 +67,17 @@ def enter_course_page(driver: webdriver.Chrome, course_name):
     )
     course_url = course_link.get_attribute('href')
     # open the course page in a new window
-    current_window = switch_to(course_url)
+    current_window = switch_to(driver, course_url)
     return current_window
 
 def download_materials(driver:webdriver.Chrome, session:requests.Session, 
-                       download_channel, download_dir):
+                       download_channel_lst, download_dir):
     '''
-    Download the materials, including pdf and ppt files.
+    Download the materials, including pdf, ppt and other files with supported suffix.
     '''
-    # find the "教学内容" element and open its href in a new window
-    try:
-        files_link = WebDriverWait(driver, 1).until(
-            EC.presence_of_element_located((By.XPATH, f"//a[span[text()='{download_channel}']]"))
-        )
-    except:
-        print("'教学内容' channel is not found!")
-        return None
-    course_window = switch_to(files_link.get_attribute('href'))
-    # find all elements containing the course materials
-    a_elements = WebDriverWait(driver, 10).until(
-        EC.presence_of_all_elements_located((By.XPATH, "//ul[@id='content_listContainer']//a"))
-    )
-    href_lst = [a.get_attribute('href') for a in a_elements]
-    # download all the materials
-    for href in href_lst:
-        download_file_from_url(session, href, download_dir)
-    # open the window and switch back to the course page
-    switch_back(course_window)
+    channel_link = enter_channel(driver, download_channel_lst)
+    if channel_link is not None:
+        recursive_download(driver, session, channel_link.get_attribute('href'), download_dir)
     return None
 
 def download_recordings(driver:webdriver.Chrome, session:requests.Session,
@@ -102,14 +86,19 @@ def download_recordings(driver:webdriver.Chrome, session:requests.Session,
     Download all the recordings of a class
     '''
     # locate the element for "课堂实录" channel and open its href in a new window
-    try:
-        files_link = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.XPATH, f"//a[span[text()='{download_channel}']]"))
-        )
-    except:
-        print("'课堂实录' channel is not found!")
-        return None
-    course_window = switch_to(files_link.get_attribute('href'))
+    # try:
+    #     files_link = WebDriverWait(driver, 10).until(
+    #         EC.presence_of_element_located((By.XPATH, f"//a[span[text()='{download_channel}']]"))
+    #     )
+    # except:
+    #     print("'课堂实录' channel is not found!")
+    #     return None
+    current_url = driver.current_url
+    parsed_url = urlparse(current_url)
+    url_params = parse_qs(parsed_url.query)
+    course_id = url_params.get('course_id', [None])[0]
+    recording_url = f'https://course.pku.edu.cn/webapps/bb-streammedia-hqy-BBLEARN/videoList.action?course_id={course_id}&mode=view'
+    course_window = switch_to(driver, recording_url)
     # get the total number of recordings
     class_num_element = WebDriverWait(driver, 10).until(
         EC.presence_of_element_located((By.XPATH, "//div[@class='pagingprefs']//strong[1]"))
@@ -138,9 +127,9 @@ def download_recordings(driver:webdriver.Chrome, session:requests.Session,
         # next_page_url = relative_url_to_absolute(next_page_button.get_attribute('href')) # used if the href is relative url
         next_page_url = next_page_button.get_attribute('href')
         driver.close()
-        switch_to(next_page_url)
+        switch_to(driver, next_page_url)
     # switch back to the course page
-    switch_back(course_window)
+    switch_back(driver, course_window)
     return None
 
 def download_recordings_page(driver:webdriver.Chrome, session:requests.Session,
@@ -153,7 +142,7 @@ def download_recordings_page(driver:webdriver.Chrome, session:requests.Session,
     # download recordings one by one
     for a in tqdm(a_elements, total=num_lecs):
         # open the recording page in a new window
-        current_window = switch_to(a.get_attribute('href'))
+        current_window = switch_to(driver, a.get_attribute('href'))
         # switch to the iframe containing the video player and the download link button
         # without the switch, the download link button can not be selected in the outer html
         iframe = WebDriverWait(driver, 10).until(
@@ -190,41 +179,21 @@ def download_recordings_page(driver:webdriver.Chrome, session:requests.Session,
             progress_bar.close()
             print(f'lec_{lec_idx}.mp4 downloaded!')
         # open the recording page and switch back to the recording list page
-        switch_back(current_window)
+        switch_back(driver, current_window)
     return None
 
 def download_homework(driver:webdriver.Chrome, session:requests.Session,
-                      download_channel, download_dir):
+                      download_channel_lst, download_dir):
     '''
     Download files in the homework channel
     '''
     # locate the "课程作业" channel and open its href in a new window
-    try:
-        files_link = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.XPATH, f"//a[span[text()='{download_channel}']]"))
-        )
-    except:
-        print("'课程作业' channel is not found!")
-        return None
-    course_window = switch_to(files_link.get_attribute('href'))
-    # locate all the elements containing the homework urls
-    homework_elements = WebDriverWait(driver, 10).until(
-        EC.presence_of_all_elements_located((By.CSS_SELECTOR, 'ul.attachments.clearfix a'))
-    )
-    ## if the href is relative url, transform it to absolute url first
-    # homework_url_lst = [relative_url_to_absolute(homework_element.get_attribute('href')) 
-    #                         for homework_element in homework_elements]
-    # if the href is already a full url, nothing needs to be done
-    homework_url_lst = [homework_element.get_attribute('href') 
-                            for homework_element in homework_elements]
-    # download all the homework files
-    for homework_url in homework_url_lst:
-        download_file_from_url(session, homework_url, download_dir)
-    # switch back to the course page
-    switch_back(course_window)
+    channel_link = enter_channel(driver, download_channel_lst)
+    if channel_link is not None:
+        recursive_download(driver, session, channel_link.get_attribute('href'), download_dir)
     return None
 
-def switch_to(new_window_url):
+def switch_to(driver:webdriver.Chrome, new_window_url):
     '''
     Open new_window_url in a new window and return the current window handle for switching back
     '''
@@ -237,7 +206,7 @@ def switch_to(new_window_url):
     # return the saved handle for switching back
     return current_window
 
-def switch_back(old_window):
+def switch_back(driver:webdriver.Chrome, old_window):
     '''
     Close current window and switch back to the old window
     '''
@@ -277,21 +246,55 @@ def relative_url_to_absolute(relative_url):
     absolute_url = base_url + relative_url
     return absolute_url
 
-def download_file_from_url(session:requests.Session, url, download_dir):
+def enter_channel(driver:webdriver.Chrome, download_channel_lst) -> WebElement | None:
+    try:
+        conditions = "or".join([f"text()='{channel}'" for channel in download_channel_lst])
+        channel_link = WebDriverWait(driver, 1).until(
+            EC.presence_of_element_located((By.XPATH, f"//li[contains(@id, 'paletteItem')]//a[span[{conditions}]]"))
+        )
+        return channel_link
+    except:
+        channels_lst = WebDriverWait(driver, 1).until(
+            EC.presence_of_all_elements_located((By.XPATH, f"//li[contains(@id, 'paletteItem')]//a"))
+        )
+        all_channels_name = [element.get_attribute('innerText') for element in channels_lst]
+        print(f"'{download_channel_lst}' channels are not found among channels {all_channels_name}!")
+        return None
+
+def recursive_download(driver:webdriver.Chrome, session:requests.Session, url, download_dir):
     '''
-    Download a file from the given url
+    Recursively download all files and directories in the given url
     '''
-    response = session.get(url)
-    # the url should ends with the file name
-    file_name = response.url.split('/')[-1]
-    if not file_name.endswith(('.pdf', '.zip', '.doc', '.docx', '.ppt', '.pptx')):
-        print(f"Not downloading {unquote(response.url)}: invalid suffix!")
-        return False
-    else:
-        with open(os.path.join(download_dir, unquote(file_name)), 'wb') as file:
-            file.write(response.content)
-            print(f"{unquote(file_name)} downloaded!")
-    return True
+    last_window = switch_to(driver, url)
+    try:
+        a_elements = WebDriverWait(driver, 10).until(
+            EC.presence_of_all_elements_located((By.XPATH, "//ul[@id='content_listContainer']//a"))
+        )
+    except:
+        print(f"No downloadable files or directories in {unquote(url)}!")
+    href_lst = [a.get_attribute('href') for a in a_elements]
+    href_lst = [relative_url_to_absolute(href) for href in href_lst if href.startswith('/')]
+    # download all the materials
+    for href in href_lst:
+        response = session.get(url)
+        file_name = response.url.split('/')[-1]
+        if not file_name.endswith(('.pdf', '.zip', '.doc', '.docx', '.ppt', '.pptx')):
+            recursive_download(driver, session, href)
+        else:
+            download_file_from_response(response, file_name, download_dir)
+    # close current window and switch back to the last window
+    switch_back(driver, last_window)
+    return None
+    
+
+def download_file_from_response(response: requests.Response, file_name, download_dir):
+    '''
+    Download a file from the response of its corresponding url
+    '''
+    with open(os.path.join(download_dir, unquote(file_name)), 'wb') as file:
+        file.write(response.content)
+        print(f"{unquote(file_name)} downloaded!")
+    return None
 
 if __name__ == '__main__':
     driver = webdriver.Chrome(service=Service(os.path.join('.', 'chromedriver.exe')))
@@ -309,7 +312,7 @@ if __name__ == '__main__':
     password = 'xxx'
     course_lst = ['JS语言Web程序设计(23-24学年第2学期)', 'Rust程序设计(23-24学年第2学期)', '人工智能中的编程(23-24学年第1学期)', '图形学物理仿真(23-24学年第2学期)', '几何计算前沿(23-24学年第2学期)', '大规模语言模型与自然语言生成(23-24学年第2学期)', '数据库概论（实验班）(23-24学年第2学期)', '角色动画与运动仿真(23-24学年第2学期)',
                     '近现代物理导论 II(23-24学年第2学期)', 'AI中的数学(21-22学年第2学期)', '多智能体系统(22-23学年第2学期)', '机器学习(21-22学年第2学期)', '生成模型基础(23-24学年第1学期)', '计算机网络(23-24学年第1学期)']
-    download_channel_lst = ['课堂实录', '教学内容', '课程作业'] # Currently only the three channels are supported
+    download_channel_lst = ['课堂实录', ['教学内容', '内容', '讲义'], ['课程作业', '作业']] # Currently only the three channels are supported
     download_dir_lst = ['recordings', 'materials', 'homework']
     recording_ignore_list = ['JS语言Web程序设计(23-24学年第2学期)', 'Rust程序设计(23-24学年第2学期)', '人工智能中的编程(23-24学年第1学期)', '图形学物理仿真(23-24学年第2学期)', '多智能体系统(22-23学年第2学期)', 'AI中的数学(21-22学年第2学期)',
                                 ]
@@ -347,8 +350,4 @@ if __name__ == '__main__':
             else:
                 raise NotImplementedError('Currently only recordings, materials and homework downloading are supported')
         # close the course page and switch back to the main course list page
-        switch_back(main_page_window)
-
-# TODO: handle the case where there are directories of files in the materials channel
-# TODO: handle the case where for older classes, there is no recording channel and it is in another place
-# TODO: login button can be both English or Chinese
+        switch_back(driver, main_page_window)
